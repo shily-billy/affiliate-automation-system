@@ -1,0 +1,22 @@
+# Web Scraping
+requests==2.31.0
+beautifulsoup4==4.12.3
+lxml==5.1.0
+selenium==4.17.2
+webdriver-manager==4.0.1
+
+# Google Sheets API
+google-api-python-client==2.116.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# Utilities
+python-dotenv==1.0.1
+schedule==1.2.1
+pytz==2024.1
+
+# Logging & Monitoring
+coloredlogs==15.0.1
+
+# Data Processing
+pandas==2.2.0
