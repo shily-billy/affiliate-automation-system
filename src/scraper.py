@@ -59,11 +59,12 @@ class AffiliateProductScraper:
         if MihanstoreScraper:
             mihanstore_config = self.config.get('MIHANSTORE_CONFIG', {})
             if mihanstore_config.get('enabled', True):
+                store_url = mihanstore_config.get('store_url', 'https://dot-shop.mihanstore.net')
                 self.scrapers['mihanstore'] = MihanstoreScraper(
-                    affiliate_id=mihanstore_config.get('affiliate_id', 'dotshop'),
+                    store_url=store_url,
                     config=mihanstore_config
                 )
-                logger.info("✅ Mihanstore scraper loaded")
+                logger.info(f"✅ Mihanstore scraper loaded for: {store_url}")
         
         logger.info(f"✅ AffiliateProductScraper initialized with {len(self.scrapers)} platform(s)")
     
@@ -79,7 +80,11 @@ class AffiliateProductScraper:
         except ImportError:
             logger.warning("⚠️ config.py not found. Using default settings.")
             return {
-                'MIHANSTORE_CONFIG': {'enabled': True, 'affiliate_id': 'dotshop'},
+                'MIHANSTORE_CONFIG': {
+                    'enabled': True, 
+                    'store_url': 'https://dot-shop.mihanstore.net',
+                    'max_products': 30
+                },
                 'DIGIKALA_CONFIG': {'enabled': False},
                 'SCRAPING_CONFIG': {},
             }
@@ -99,7 +104,7 @@ class AffiliateProductScraper:
             return []
         
         logger.info("🔍 Starting Mihanstore scraping...")
-        return self.scrapers['mihanstore'].scrape_popular_products(max_products)
+        return self.scrapers['mihanstore'].scrape_all_products(max_products)
     
     def scrape_all_platforms(self) -> Dict[str, List[Dict]]:
         """
@@ -147,10 +152,12 @@ class AffiliateProductScraper:
         
         for platform, products in data.items():
             if products:
+                prices = [p.get('price', 0) for p in products if p.get('price', 0) > 0]
                 summary['platforms'][platform] = {
                     'count': len(products),
-                    'avg_price': sum(p.get('price', 0) for p in products) / len(products),
-                    'categories': list(set(p.get('category', 'N/A') for p in products)),
+                    'avg_price': sum(prices) / len(prices) if prices else 0,
+                    'min_price': min(prices) if prices else 0,
+                    'max_price': max(prices) if prices else 0,
                 }
                 summary['total_products'] += len(products)
         
@@ -183,7 +190,9 @@ def main():
     logger.info(f"Total Products: {summary['total_products']}")
     for platform, stats in summary['platforms'].items():
         logger.info(f"  • {platform.upper()}: {stats['count']} products")
-        logger.info(f"    Average Price: {stats['avg_price']:,.0f} تومان")
+        if stats['avg_price'] > 0:
+            logger.info(f"    Average Price: {stats['avg_price']:,.0f} تومان")
+            logger.info(f"    Price Range: {stats['min_price']:,.0f} - {stats['max_price']:,.0f} تومان")
     logger.info("="*70)
     
     logger.info("✅ Process completed successfully!")

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Mihanstore Scraper Module
+Mihanstore Storefront Scraper
 
-ماژول دریافت محصولات از میهن استور
+اسکریپت واقعی برای دریافت محصولات از فروشگاه میهن استور
+بر اساس ساختار واقعی: product.php?id=XXXX
 """
 
 import logging
 import time
 import re
-from typing import List, Dict, Optional
-from urllib.parse import urljoin
+from typing import List, Dict, Optional, Set
+from urllib.parse import urljoin, urlparse, parse_qs
 
 try:
     import requests
@@ -22,19 +23,22 @@ logger = logging.getLogger(__name__)
 
 
 class MihanstoreScraper:
-    """کلاس scraper برای میهن استور"""
+    """اسکریپر واقعی برای فروشگاه میهن استور"""
     
-    BASE_URL = "https://mihanstore.net"
-    AFFILIATE_URL = "https://affiliate-marketing.mihanstore.net"
-    
-    def __init__(self, affiliate_id: str = None, config: Optional[Dict] = None):
+    def __init__(self, store_url: str = "https://dot-shop.mihanstore.net", config: Optional[Dict] = None):
         """
         Args:
-            affiliate_id: شناسه افیلیت شما
+            store_url: آدرس فروشگاه شما در میهن استور
             config: تنظیمات اضافی
         """
-        self.affiliate_id = affiliate_id or "dotshop"
+        self.store_url = store_url.rstrip('/')
         self.config = config or {}
+        
+        # Fallback domains اگر دسترسی مستقیم به فروشگاه نداشتیم
+        self.fallback_domains = [
+            "https://mihanstore.net",
+            "https://www3.mihanstore.net",
+        ]
         
         self.session = requests.Session()
         self.session.headers.update({
@@ -45,14 +49,15 @@ class MihanstoreScraper:
             'Connection': 'keep-alive',
         })
         
-        logger.info(f"✅ MihanstoreScraper initialized with affiliate_id: {self.affiliate_id}")
+        logger.info(f"✅ MihanstoreScraper initialized for: {self.store_url}")
     
     def _clean_price(self, price_text: str) -> int:
         """
-        پاکسازی و تبدیل قیمت به عدد
+        تبدیل قیمت به عدد
+        مثال: "1,698,000 تومان" -> 1698000
         
         Args:
-            price_text: متن قیمت (مثل: "248,000 تومان")
+            price_text: متن قیمت
             
         Returns:
             قیمت به صورت عدد صحیح (تومان)
@@ -60,7 +65,7 @@ class MihanstoreScraper:
         if not price_text:
             return 0
         
-        # حذف کاراکترهای غیرعددی
+        # حذف کاراکترهای غیرعددی (جز ممیز و نقطه)
         numbers = re.sub(r'[^0-9]', '', price_text)
         
         try:
@@ -69,144 +74,197 @@ class MihanstoreScraper:
             logger.warning(f"⚠️ خطا در تبدیل قیمت: {price_text}")
             return 0
     
-    def _build_affiliate_link(self, product_url: str) -> str:
+    def _fetch_page(self, url: str, use_fallback: bool = True) -> Optional[BeautifulSoup]:
         """
-        ساخت لینک افیلیت
+        دریافت و parse کردن صفحه
         
         Args:
-            product_url: لینک اصلی محصول
+            url: آدرس صفحه
+            use_fallback: استفاده از دامنه‌های جایگزین در صورت خطا
             
         Returns:
-            لینک افیلیت کامل
+            BeautifulSoup object یا None
         """
-        if '?' in product_url:
-            return f"{product_url}&ref={self.affiliate_id}"
-        else:
-            return f"{product_url}?ref={self.affiliate_id}"
+        try:
+            response = self.session.get(url, timeout=30)
+            response.raise_for_status()
+            return BeautifulSoup(response.content, 'lxml')
+        except Exception as e:
+            logger.warning(f"⚠️ خطا در دریافت {url}: {e}")
+            
+            # تلاش با fallback domains
+            if use_fallback and 'product.php' in url:
+                product_id = self._extract_product_id(url)
+                if product_id:
+                    for fallback_domain in self.fallback_domains:
+                        try:
+                            fallback_url = f"{fallback_domain}/product.php?id={product_id}"
+                            logger.info(f"🔄 تلاش با: {fallback_url}")
+                            response = self.session.get(fallback_url, timeout=30)
+                            response.raise_for_status()
+                            return BeautifulSoup(response.content, 'lxml')
+                        except:
+                            continue
+            
+            return None
     
-    def scrape_category(self, category_url: str, max_products: int = 50) -> List[Dict]:
+    def _extract_product_id(self, url: str) -> Optional[str]:
+        """استخراج ID محصول از URL"""
+        try:
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+            return params.get('id', [None])[0]
+        except:
+            return None
+    
+    def discover_product_links(self, max_products: int = 50) -> Set[str]:
         """
-        دریافت محصولات از یک دسته‌بندی
+        کشف لینک‌های محصولات از صفحه اصلی فروشگاه
         
         Args:
-            category_url: لینک دسته‌بندی
             max_products: حداکثر تعداد محصول
             
         Returns:
-            لیست محصولات
+            مجموعه لینک‌های محصولات
         """
-        logger.info(f"🔍 Scraping category: {category_url}")
-        products = []
+        logger.info(f"🔍 شروع جستجوی محصولات از: {self.store_url}")
         
-        try:
-            # درخواست به صفحه دسته‌بندی
-            response = self.session.get(category_url, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'lxml')
-            
-            # پیدا کردن عناصر محصول
-            # میهن استور معمولاً از ساختار product-card استفاده می‌کند
-            product_cards = soup.select('.product-card, .product-item, .product, article.product')
-            
-            if not product_cards:
-                logger.warning("⚠️ محصولی پیدا نشد. ساختار HTML تغییر کرده.")
-                # تلاش با ساختار دیگر
-                product_cards = soup.find_all('div', class_=re.compile(r'product', re.I))
-            
-            logger.info(f"✅ Found {len(product_cards)} products")
-            
-            for idx, card in enumerate(product_cards[:max_products], 1):
-                try:
-                    product = self._extract_product_info(card)
-                    if product:
-                        products.append(product)
-                        logger.info(f"  [{idx}/{min(max_products, len(product_cards))}] {product['name'][:50]}...")
-                    
-                    # تاخیر بین درخواست‌ها
-                    time.sleep(0.5)
-                    
-                except Exception as e:
-                    logger.error(f"❌ خطا در استخراج محصول {idx}: {e}")
-                    continue
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ خطای شبکه: {e}")
-        except Exception as e:
-            logger.error(f"❌ خطای ناشناخته: {e}")
+        product_links = set()
         
-        logger.info(f"✅ Scraped {len(products)} products from category")
-        return products
+        # دریافت صفحه اصلی
+        soup = self._fetch_page(self.store_url)
+        if not soup:
+            logger.error("❌ دسترسی به صفحه اصلی فروشگاه ممکن نیست")
+            return product_links
+        
+        # پیدا کردن تمام لینک‌های product.php?id=
+        for link in soup.find_all('a', href=True):
+            href = link['href']
+            
+            # چک کردن اینکه product.php?id= داره
+            if 'product.php' in href and 'id=' in href:
+                # ساخت URL کامل
+                full_url = urljoin(self.store_url, href)
+                product_links.add(full_url)
+                
+                if len(product_links) >= max_products:
+                    break
+        
+        logger.info(f"✅ {len(product_links)} محصول پیدا شد")
+        return product_links
     
-    def _extract_product_info(self, card) -> Optional[Dict]:
+    def scrape_product(self, product_url: str) -> Optional[Dict]:
         """
-        استخراج اطلاعات محصول از کارت
+        استخراج اطلاعات یک محصول
         
         Args:
-            card: عنصر BeautifulSoup کارت محصول
+            product_url: لینک محصول
             
         Returns:
             دیکشنری اطلاعات محصول
         """
+        product_id = self._extract_product_id(product_url)
+        if not product_id:
+            logger.warning(f"⚠️ ID محصول پیدا نشد: {product_url}")
+            return None
+        
+        logger.debug(f"🔍 در حال scraping محصول ID: {product_id}")
+        
+        # دریافت صفحه محصول
+        soup = self._fetch_page(product_url, use_fallback=True)
+        if not soup:
+            logger.warning(f"⚠️ دسترسی به محصول {product_id} ممکن نیست")
+            return None
+        
         try:
-            # نام محصول
-            name_elem = card.select_one('h3, h2, .product-title, .title, a[title]')
-            name = name_elem.get_text(strip=True) if name_elem else None
-            if not name and name_elem:
-                name = name_elem.get('title', '').strip()
+            # استخراج نام محصول
+            name = None
+            # تلاش 1: از title صفحه
+            if soup.title:
+                name = soup.title.get_text(strip=True)
+                # حذف "میهن استور" یا عبارات اضافی از آخر
+                name = re.sub(r'\s*[-|]\s*(میهن استور|خرید پستی).*$', '', name, flags=re.IGNORECASE)
+            
+            # تلاش 2: از h1
+            if not name:
+                h1 = soup.find('h1')
+                if h1:
+                    name = h1.get_text(strip=True)
+            
+            # تلاش 3: از هر عنصر با class حاوی "product" و "title"
+            if not name:
+                title_elem = soup.find(class_=re.compile(r'product.*title|title.*product', re.I))
+                if title_elem:
+                    name = title_elem.get_text(strip=True)
             
             if not name:
+                logger.warning(f"⚠️ نام محصول {product_id} پیدا نشد")
                 return None
             
-            # لینک محصول
-            link_elem = card.select_one('a[href]')
-            link = link_elem.get('href', '') if link_elem else ''
+            # استخراج قیمت
+            price = 0
+            # جستجو برای الگوی قیمت: عدد + کاما + "تومان"
+            price_pattern = r'([0-9,]+)\s*تومان'
+            price_matches = soup.find_all(text=re.compile(price_pattern))
             
-            if link and not link.startswith('http'):
-                link = urljoin(self.BASE_URL, link)
+            if price_matches:
+                # گرفتن اولین قیمت پیدا شده
+                price_text = str(price_matches[0])
+                price = self._clean_price(price_text)
+            else:
+                # تلاش با سلکتورهای معمول
+                price_selectors = ['.price', '.product-price', '[class*="price"]', 'span.price']
+                for selector in price_selectors:
+                    price_elem = soup.select_one(selector)
+                    if price_elem:
+                        price = self._clean_price(price_elem.get_text())
+                        if price > 0:
+                            break
             
-            # قیمت
-            price_elem = card.select_one('.price, .product-price, .price-current, span[class*="price"]')
-            price_text = price_elem.get_text(strip=True) if price_elem else '0'
-            price = self._clean_price(price_text)
+            # استخراج تصویر اصلی محصول
+            image_url = None
             
-            # تصویر
-            img_elem = card.select_one('img')
-            image = ''
+            # تلاش 1: تصویر با id یا class خاص محصول
+            img_elem = soup.select_one('img[class*="product"], img[id*="product"], .product-image img')
             if img_elem:
-                image = img_elem.get('src') or img_elem.get('data-src') or img_elem.get('data-lazy-src') or ''
-                if image and not image.startswith('http'):
-                    image = urljoin(self.BASE_URL, image)
+                image_url = img_elem.get('src') or img_elem.get('data-src')
             
-            # ساخت لینک افیلیت
-            affiliate_link = self._build_affiliate_link(link) if link else ''
+            # تلاش 2: اولین تصویر بزرگ در محتوا
+            if not image_url:
+                for img in soup.find_all('img'):
+                    src = img.get('src') or img.get('data-src')
+                    if src and not any(x in src.lower() for x in ['logo', 'icon', 'banner', 'button']):
+                        image_url = src
+                        break
             
-            # دسته‌بندی (اگر موجود باشد)
-            category_elem = card.select_one('.category, .product-category')
-            category = category_elem.get_text(strip=True) if category_elem else 'Fashion'
+            if image_url and not image_url.startswith('http'):
+                image_url = urljoin(self.store_url, image_url)
+            
+            # ساخت لینک محصول روی فروشگاه خودتون
+            product_link = f"{self.store_url}/product.php?id={product_id}"
             
             product_data = {
-                'name': name,
+                'product_id': product_id,
+                'name': name.strip(),
                 'price': price,
-                'price_formatted': f"{price:,} تومان",
-                'image': image,
-                'link': link,
-                'affiliate_link': affiliate_link,
-                'category': category,
+                'price_formatted': f"{price:,} تومان" if price > 0 else "تماس بگیرید",
+                'image': image_url or '',
+                'product_url': product_link,
                 'platform': 'mihanstore',
-                'commission_rate': 10,  # نرخ کمیسیون پیش‌فرض 10%
+                'store': self.store_url,
                 'scraped_at': time.strftime('%Y-%m-%d %H:%M:%S'),
             }
             
+            logger.debug(f"✅ محصول {product_id}: {name[:50]}... - {price:,} تومان")
             return product_data
             
         except Exception as e:
-            logger.error(f"❌ خطا در استخراج اطلاعات: {e}")
+            logger.error(f"❌ خطا در استخراج محصول {product_id}: {e}")
             return None
     
-    def scrape_popular_products(self, max_products: int = 30) -> List[Dict]:
+    def scrape_all_products(self, max_products: int = 30) -> List[Dict]:
         """
-        دریافت محصولات محبوب/پرفروش
+        دریافت تمام محصولات فروشگاه
         
         Args:
             max_products: حداکثر تعداد محصول
@@ -214,52 +272,47 @@ class MihanstoreScraper:
         Returns:
             لیست محصولات
         """
-        logger.info("🔥 Scraping popular products...")
-        return self.scrape_category(self.BASE_URL, max_products)
-    
-    def scrape_by_categories(self, categories: List[str], max_per_category: int = 20) -> Dict[str, List[Dict]]:
-        """
-        دریافت محصولات بر اساس دسته‌بندی‌ها
+        logger.info(f"🚀 شروع scraping فروشگاه: {self.store_url}")
         
-        Args:
-            categories: لیست لینک دسته‌بندی‌ها
-            max_per_category: حداکثر تعداد محصول هر دسته
+        # کشف لینک‌های محصولات
+        product_links = self.discover_product_links(max_products)
+        
+        if not product_links:
+            logger.warning("⚠️ هیچ محصولی پیدا نشد!")
+            return []
+        
+        # Scrape کردن هر محصول
+        products = []
+        total = len(product_links)
+        
+        for idx, link in enumerate(product_links, 1):
+            logger.info(f"[{idx}/{total}] در حال پردازش...")
             
-        Returns:
-            دیکشنری شامل محصولات هر دسته
-        """
-        results = {}
+            product = self.scrape_product(link)
+            if product:
+                products.append(product)
+            
+            # تاخیر بین درخواست‌ها
+            if idx < total:
+                time.sleep(1)
         
-        for category_url in categories:
-            try:
-                category_name = category_url.split('/')[-1] or 'main'
-                logger.info(f"\n📂 Processing category: {category_name}")
-                
-                products = self.scrape_category(category_url, max_per_category)
-                results[category_name] = products
-                
-                # تاخیر بین دسته‌بندی‌ها
-                time.sleep(2)
-                
-            except Exception as e:
-                logger.error(f"❌ خطا در پردازش دسته {category_url}: {e}")
-                results[category_url] = []
-        
-        total = sum(len(prods) for prods in results.values())
-        logger.info(f"\n✅ Total products scraped: {total}")
-        
-        return results
+        logger.info(f"\n✅ تعداد کل محصولات دریافت شده: {len(products)}")
+        return products
 
 
 if __name__ == '__main__':
     # تست سریع
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
     
-    scraper = MihanstoreScraper(affiliate_id='dotshop')
-    products = scraper.scrape_popular_products(max_products=10)
+    # تست با فروشگاه dot-shop
+    scraper = MihanstoreScraper(store_url="https://dot-shop.mihanstore.net")
+    products = scraper.scrape_all_products(max_products=10)
     
-    print(f"\n\n📦 Total: {len(products)} products")
+    print(f"\n\n📦 تعداد کل: {len(products)} محصول")
     if products:
-        print("\n👇 Sample product:")
+        print("\n👇 نمونه محصول اول:")
         import json
         print(json.dumps(products[0], ensure_ascii=False, indent=2))

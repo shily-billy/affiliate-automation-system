@@ -23,9 +23,17 @@ SCRAPING_CONFIG = {
 }
 
 # ==================== AFFILIATE PLATFORMS ====================
+
+# میهن استور
+MIHANSTORE_CONFIG = {
+    'enabled': True,
+    'store_url': 'https://dot-shop.mihanstore.net',  # آدرس فروشگاه شما
+    'max_products': 30,  # تعداد محصول
+}
+
 # دیجی‌کالا
 DIGIKALA_CONFIG = {
-    'enabled': True,
+    'enabled': False,
     'affiliate_id': 'YOUR_AFFILIATE_ID',
     'categories': [
         'mobile',
@@ -33,13 +41,6 @@ DIGIKALA_CONFIG = {
         'headphone',
     ],
     'max_products': 50,  # تعداد محصول هر دسته
-}
-
-# میهن استور
-MIHAN_STORE_CONFIG = {
-    'enabled': False,
-    'affiliate_id': 'YOUR_AFFILIATE_ID',
-    'categories': [],
 }
 
 # خانومی
