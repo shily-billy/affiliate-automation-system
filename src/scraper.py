@@ -10,6 +10,7 @@ import logging
 import json
 import time
 import os
+import sys
 from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -27,6 +28,15 @@ try:
 except ImportError:
     print("⚠️ ماژول platforms پیدا نشد. مطمئن شوید در مسیر صحیح هستید.")
     MihanstoreScraper = None
+
+# Import Google Sheets (optional)
+try:
+    from google_sheets import GoogleSheetsManager
+    SHEETS_AVAILABLE = True
+except ImportError:
+    SHEETS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("⚠️ Google Sheets غیرفعال - پکیج‌های Google API نصب نشده")
 
 # Setup Logging
 log_dir = Path('logs')
@@ -66,6 +76,32 @@ class AffiliateProductScraper:
                 )
                 logger.info(f"✅ Mihanstore scraper loaded for: {store_url}")
         
+        # Initialize Google Sheets (if enabled)
+        self.sheets_manager = None
+        sheets_config = self.config.get('GOOGLE_SHEETS_CONFIG', {})
+        
+        if SHEETS_AVAILABLE and sheets_config.get('enabled', False):
+            try:
+                credentials_file = sheets_config.get('credentials_file', 'credentials.json')
+                self.sheets_manager = GoogleSheetsManager(
+                    credentials_file=credentials_file,
+                    config=sheets_config
+                )
+                
+                # ساخت Spreadsheet اگر وجود نداره
+                if not sheets_config.get('spreadsheet_id'):
+                    spreadsheet_id = self.sheets_manager.create_spreadsheet()
+                    logger.info(f"✅ Spreadsheet جدید ساخته شد")
+                    logger.info(f"🔗 URL: {self.sheets_manager.get_spreadsheet_url()}")
+                    logger.info(f"⚠️  لطفاً ID را در config.py ذخیره کنید: {spreadsheet_id}")
+                
+                logger.info("✅ Google Sheets Integration فعال")
+                
+            except Exception as e:
+                logger.error(f"❌ خطا در راه‌اندازی Google Sheets: {e}")
+                logger.info("راهنما: docs/GOOGLE_SHEETS_SETUP.md")
+                self.sheets_manager = None
+        
         logger.info(f"✅ AffiliateProductScraper initialized with {len(self.scrapers)} platform(s)")
     
     def _load_config(self) -> Dict:
@@ -74,8 +110,9 @@ class AffiliateProductScraper:
             import config
             return {
                 'MIHANSTORE_CONFIG': config.MIHANSTORE_CONFIG,
-                'DIGIKALA_CONFIG': config.DIGIKALA_CONFIG,
-                'SCRAPING_CONFIG': config.SCRAPING_CONFIG,
+                'DIGIKALA_CONFIG': getattr(config, 'DIGIKALA_CONFIG', {'enabled': False}),
+                'GOOGLE_SHEETS_CONFIG': getattr(config, 'GOOGLE_SHEETS_CONFIG', {'enabled': False}),
+                'SCRAPING_CONFIG': getattr(config, 'SCRAPING_CONFIG', {}),
             }
         except ImportError:
             logger.warning("⚠️ config.py not found. Using default settings.")
@@ -86,6 +123,7 @@ class AffiliateProductScraper:
                     'max_products': 30
                 },
                 'DIGIKALA_CONFIG': {'enabled': False},
+                'GOOGLE_SHEETS_CONFIG': {'enabled': False},
                 'SCRAPING_CONFIG': {},
             }
     
@@ -142,6 +180,44 @@ class AffiliateProductScraper:
             json.dump(data, f, ensure_ascii=False, indent=2)
         logger.info(f"💾 Data saved to {filepath}")
     
+    def save_to_sheets(self, data: Dict) -> bool:
+        """
+        ذخیره داده‌ها در Google Sheets
+        
+        Args:
+            data: دیکشنری محصولات
+            
+        Returns:
+            True اگر موفق بود
+        """
+        if not self.sheets_manager:
+            logger.warning("⚠️ Google Sheets غیرفعال - فقط در JSON ذخیره می‌شود")
+            return False
+        
+        try:
+            # تبدیل dict به list
+            all_products = []
+            for platform, products in data.items():
+                all_products.extend(products)
+            
+            if not all_products:
+                logger.warning("⚠️ هیچ محصولی برای آپلود وجود ندارد")
+                return False
+            
+            # آپلود به Sheets
+            stats = self.sheets_manager.upload_products(all_products, mode='update')
+            
+            logger.info(f"📊 Google Sheets Stats:")
+            logger.info(f"   ➕ Added: {stats['added']}")
+            logger.info(f"   🔄 Updated: {stats['updated']}")
+            logger.info(f"   🟢 Unchanged: {stats['unchanged']}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ خطا در آپلود Google Sheets: {e}")
+            return False
+    
     def generate_summary(self, data: Dict) -> Dict:
         """تولید خلاصه آماری"""
         summary = {
@@ -183,6 +259,9 @@ def main():
     scraper.save_to_json(products, 'data/products.json')
     scraper.save_to_json(summary, 'data/summary.json')
     
+    # ذخیره در Google Sheets (اگر فعال باشه)
+    scraper.save_to_sheets(products)
+    
     # نمایش خلاصه
     logger.info("\n" + "="*70)
     logger.info("📊 SUMMARY")
@@ -193,6 +272,13 @@ def main():
         if stats['avg_price'] > 0:
             logger.info(f"    Average Price: {stats['avg_price']:,.0f} تومان")
             logger.info(f"    Price Range: {stats['min_price']:,.0f} - {stats['max_price']:,.0f} تومان")
+    
+    # نمایش لینک Google Sheets
+    if scraper.sheets_manager:
+        url = scraper.sheets_manager.get_spreadsheet_url()
+        if url:
+            logger.info(f"\n🔗 Google Sheets: {url}")
+    
     logger.info("="*70)
     
     logger.info("✅ Process completed successfully!")
