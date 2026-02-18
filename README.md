@@ -40,30 +40,84 @@
 ```bash
 python >= 3.9
 pip
+git
 ```
 
 ### مراحل نصب:
 
-1. کلون کردن پروژه:
+#### 🔧 نصب اولیه (یکبار):
+
 ```bash
+# 1. کلون کردن پروژه
 git clone https://github.com/shily-billy/affiliate-automation-system.git
 cd affiliate-automation-system
-```
 
-2. نصب وابستگی‌ها:
-```bash
+# 2. نصب وابستگی‌ها
 pip install -r requirements.txt
-```
 
-3. تنظیمات:
-```bash
+# 3. تنظیمات
 cp config.example.py config.py
-# ویرایش config.py و اضافه کردن API keys
+nano config.py  # ویرایش و اضافه کردن تنظیمات
+
+# 4. اجرای اولین تست
+python src/platforms/mihanstore.py
 ```
 
-4. اجرا:
+#### 🔄 آپدیت و تست (بعد از هر تغییر):
+
+**روش 1: اسکریپت خودکار (توصیه می‌شه)** ⭐
+
+```bash
+cd affiliate-automation-system
+chmod +x update_and_test.sh   # فقط بار اول
+./update_and_test.sh
+```
+
+این اسکریپت خودکار:
+- ✅ آخرین تغییرات رو از GitHub می‌گیره
+- ✅ پکیج‌های جدید رو نصب می‌کنه  
+- ✅ تست می‌کنه که همه چیز کار می‌کنه
+- ✅ گزارش کامل می‌ده
+
+**روش 2: دستی**
+
+```bash
+cd affiliate-automation-system
+git pull origin main
+pip install -r requirements.txt --upgrade
+python src/scraper.py
+```
+
+**روش 3: One-liner سریع**
+
+```bash
+cd affiliate-automation-system && git pull && pip install -r requirements.txt && python src/scraper.py
+```
+
+---
+
+## 🚀 استفاده
+
+### تست سریع Mihanstore:
+```bash
+python src/platforms/mihanstore.py
+```
+
+### اجرای کامل سیستم:
 ```bash
 python src/scraper.py
+```
+
+### مشاهده نتایج:
+```bash
+# محصولات دریافت شده
+cat data/products.json
+
+# خلاصه آماری
+cat data/summary.json
+
+# لاگ‌های سیستم
+tail -f logs/scraper.log
 ```
 
 ---
@@ -74,19 +128,37 @@ python src/scraper.py
 affiliate-automation-system/
 │
 ├── src/
-│   ├── scraper.py          # اسکریپت اصلی scraping
-│   ├── google_sheets.py    # ماژول Google Sheets
+│   ├── scraper.py          # اسکریپت اصلی
+│   ├── platforms/
+│   │   ├── __init__.py
+│   │   └── mihanstore.py   # Scraper میهن استور
 │   └── utils.py            # توابع کمکی
 │
 ├── data/
-│   └── products.json       # ذخیره موقت محصولات
+│   ├── products.json       # محصولات دریافت شده
+│   └── summary.json        # خلاصه آماری
 │
 ├── logs/
 │   └── scraper.log         # لاگ‌های سیستم
 │
 ├── config.example.py       # نمونه تنظیمات
+├── config.py              # تنظیمات شما (git ignore)
 ├── requirements.txt        # وابستگی‌های Python
+├── update_and_test.sh     # اسکریپت آپدیت خودکار
 └── README.md              # این فایل
+```
+
+---
+
+## ⚙️ تنظیمات
+
+### Mihanstore Config:
+```python
+MIHANSTORE_CONFIG = {
+    'enabled': True,
+    'store_url': 'https://dot-shop.mihanstore.net',  # آدرس فروشگاه شما
+    'max_products': 30,  # تعداد محصول برای دریافت
+}
 ```
 
 ---
@@ -95,10 +167,11 @@ affiliate-automation-system/
 
 ### ✅ Phase 1: Data Collection (در حال توسعه)
 - [x] ساختار اولیه پروژه
-- [ ] Scraper برای دیجی‌کالا
+- [x] Scraper برای میهن استور
+- [x] اسکریپت آپدیت خودکار
 - [ ] Google Sheets Integration
 - [ ] زمان‌بندی خودکار
-- [ ] مدیریت خطا و لاگ‌گیری
+- [ ] مدیریت خطا و لاگ‌گیری پیشرفته
 
 ### 📋 Phase 2: Content Generation (آینده)
 - [ ] تولید محتوا با ChatGPT API
@@ -113,6 +186,25 @@ affiliate-automation-system/
 ### 📋 Phase 4: Order Management (آینده)
 - [ ] مدیریت سفارشات
 - [ ] پیگیری کد رهگیری
+
+---
+
+## 🐛 عیب‌یابی
+
+### خطا: "Module not found"
+```bash
+pip install -r requirements.txt --upgrade
+```
+
+### خطا: "Permission denied" برای update_and_test.sh
+```bash
+chmod +x update_and_test.sh
+```
+
+### خطا در اتصال به فروشگاه:
+- چک کنید اینترنت متصل باشه
+- چک کنید آدرس فروشگاه در `config.py` درست باشه
+- لاگ‌ها رو بررسی کنید: `cat logs/scraper.log`
 
 ---
 
@@ -133,3 +225,17 @@ MIT License
 
 ## 📞 تماس
 سوالات؟ Issue باز کنید!
+
+---
+
+## 📝 یادداشت‌های توسعه
+
+### آخرین تغییرات:
+- ✅ بازنویسی Mihanstore scraper بر اساس ساختار واقعی
+- ✅ اضافه شدن اسکریپت آپدیت خودکار
+- ✅ پشتیبانی از fallback domains
+- ✅ بهبود استخراج قیمت و تصاویر
+
+### در حال کار:
+- 🔄 Google Sheets integration
+- 🔄 زمان‌بندی خودکار با cron
